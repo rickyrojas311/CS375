@@ -23,6 +23,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
+import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -40,10 +41,38 @@ sns.set_theme(style="whitegrid")
 class AlexNet(nn.Module):
     def __init__(self, num_classes: int = 1000, dropout: float = 0.5) -> None:
         super().__init__()
-        ### TODO: Implement the AlexNet model as described in the assignment
+        self.conv1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=11, stride=4, padding=2)
+        self.max_pool = nn.MaxPool2d(kernel_size=3, stride=2)
+
+        self.conv2 = nn.Conv2d(in_channels=64, out_channels=192, kernel_size=5, padding=2)
+        
+        self.conv3 = nn.Conv2d(in_channels=192, out_channels=384, kernel_size=3, padding=1)
+        self.conv4 = nn.Conv2d(in_channels=384, out_channels=384, kernel_size=3, padding=1)
+        self.conv5 = nn.Conv2d(in_channels=384, out_channels=256, kernel_size=3, padding=1)
+
+        self.dropout = nn.Dropout(p=dropout)
+
+        self.fc1 = nn.Linear(256 * 6 * 6, 4096)
+        self.fc2 = nn.Linear(4096, 4096)
+        self.fc3 = nn.Linear(4096, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # TODO: Implement the forward pass of the AlexNet model
+        # Features
+        x = self.max_pool(F.relu(self.conv1(x)))
+        x = self.max_pool(F.relu(self.conv2(x)))
+        x = F.relu(self.conv3(x))
+        x = F.relu(self.conv4(x))
+        x = self.max_pool(F.relu(self.conv5(x)))
+
+        x = torch.flatten(x, 1) 
+
+        # Classifier
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+
+        x = F.relu(self.fc2(x))
+        x = self.dropout(x)
+        x = self.fc3(x)
         return x
 
 
@@ -69,7 +98,32 @@ def evaluate_accuracy_and_loss(
         - loss: float, the average loss of the model on the data_loader
     """
     ### TODO: Implement the evaluation function that computes the top-1 accuracy and loss
-    return
+    model.eval()
+    loss_fn = nn.CrossEntropyLoss()
+    
+    total_loss = 0
+    correct_predictions = 0
+    total_samples = 0
+    
+    with torch.no_grad():
+        for images, labels in data_loader:
+            images, labels = images.to(device), labels.to(device)
+            
+            outputs = model(images)
+            
+            loss = loss_fn(outputs, labels)
+            
+            total_loss += loss.item()
+            
+            _, predicted = torch.max(outputs, 1) 
+            
+            total_samples += labels.size(0)
+            correct_predictions += (predicted == labels).sum().item()
+
+    avg_loss = total_loss / len(data_loader)
+    accuracy = correct_predictions / total_samples
+
+    return accuracy, avg_loss
 
 def plot_conv1_kernels(model: torch.nn.Module, epoch: int):
     """
@@ -80,6 +134,39 @@ def plot_conv1_kernels(model: torch.nn.Module, epoch: int):
         - epoch: int, the current training epoch
     """
     ### TODO: Implement the function to plot the Conv1 kernels
+    # 1. Access the first convolution's weights
+    # AlexNet structure is usually model.features[0] for the first Conv2d
+    weights = model.conv1.weight.data.cpu()
+
+    # 2. Create a grid of images
+    # normalize=True shifts the image to the range (0, 1)
+    # scale_each=True scales each kernel individually, improving contrast
+    grid_tensor = torchvision.utils.make_grid(
+        weights, 
+        nrow=8, 
+        padding=2, 
+        normalize=True, 
+        scale_each=True
+    )
+
+    # 3. Prepare for Matplotlib
+    # make_grid returns (C, H, W), but matplotlib expects (H, W, C)
+    grid_image = grid_tensor.permute(1, 2, 0).numpy()
+
+    # 4. Plot and Save
+    plt.figure(figsize=(10, 10))
+    plt.imshow(grid_image)
+    plt.axis('off')  # Hide axes for a cleaner look
+    plt.title(f'Conv1 Kernels - Epoch {epoch}')
+
+    # Ensure the output directory exists
+    os.makedirs('out', exist_ok=True)
+    
+    save_path = f'out/conv1_kernels_epoch_{epoch}.png'
+    plt.savefig(save_path, bbox_inches='tight')
+    plt.close()  # Close the figure to free memory
+
+    print(f"Saved Conv1 kernels visualization to {save_path}")
 
 def compute_circular_variance(angles_deg, responses):
     """
@@ -172,7 +259,7 @@ def plot_sine_grating_responses_for_filters(
     ])
 
     # We'll measure the responses of the first conv layer
-    conv1 = model.features[0]
+    conv1 = model.conv1
 
     # Gather all sine grating image files
     image_dir = "sine_grating_images"
@@ -226,6 +313,75 @@ def plot_sine_grating_responses_for_filters(
         #   - Visualize the kernel
         #   - Save the figure to out_dir
         # Repeat for each kernel
+    
+        data = responses_per_kernel[k]
+
+        # Convert data list to arrays for easier indexing
+        # data structure: [(deg, sf, resp), ...]
+        degs = np.array([d[0] for d in data])
+        sfs  = np.array([d[1] for d in data])
+        resps = np.array([d[2] for d in data])
+
+        # --- Use the helper function to compute CV ---
+        # Note: CV is computed across *all* responses collected. 
+        # Ideally, CV is computed over orientation for the *best* spatial frequency, 
+        # or averaged. Here we compute it over the full set of degs in the list 
+        # (which inherently averages over SFs if the dataset is balanced, or you 
+        # can filter for the best SF first).
+        # Typically, we compute CV at the preferred SF:
+        best_idx = np.argmax(resps)
+        best_sf = sfs[best_idx]
+        best_deg = degs[best_idx]
+        
+        # Filter data for the best spatial frequency to get a clean orientation tuning curve
+        mask_sf = np.isclose(sfs, best_sf)
+        tuning_degs = degs[mask_sf]
+        tuning_resps = resps[mask_sf]
+        
+        # Compute CV using the specific tuning curve data
+        cv = compute_circular_variance(tuning_resps, tuning_degs)
+        circular_variances.append(cv)
+
+        # --- Generate Plots ---
+        fig, axs = plt.subplots(1, 3, figsize=(18, 5))
+        fig.suptitle(f"Kernel {k} | Circular Variance: {cv:.4f}", fontsize=14)
+
+        # Subplot 1: Response vs Orientation (at best SF)
+        sorted_indices = np.argsort(tuning_degs)
+        axs[0].plot(tuning_degs[sorted_indices], tuning_resps[sorted_indices], marker='o')
+        axs[0].set_title(f"Tuning Curve (Fixed SF={best_sf:.2f})")
+        axs[0].set_xlabel("Orientation (deg)")
+        axs[0].set_ylabel("Response")
+        axs[0].grid(True, alpha=0.3)
+
+        # Subplot 2: Response vs Spatial Frequency (at best Deg)
+        mask_deg = np.isclose(degs, best_deg)
+        sf_tuning_sfs = sfs[mask_deg]
+        sf_tuning_resps = resps[mask_deg]
+        sorted_indices_sf = np.argsort(sf_tuning_sfs)
+        
+        axs[1].plot(sf_tuning_sfs[sorted_indices_sf], sf_tuning_resps[sorted_indices_sf], marker='o', color='orange')
+        axs[1].set_title(f"Spatial Freq Tuning (Fixed Deg={best_deg:.1f})")
+        axs[1].set_xlabel("Spatial Frequency (sf)")
+        axs[1].set_ylabel("Response")
+        axs[1].grid(True, alpha=0.3)
+
+        # Subplot 3: Visualizing the kernel
+        w = conv1.weight.data[k].cpu() # Shape: [3, 11, 11]
+        w_min, w_max = w.min(), w.max()
+        if w_max > w_min:
+            w_norm = (w - w_min) / (w_max - w_min)
+        else:
+            w_norm = w
+        w_img = w_norm.permute(1, 2, 0).numpy()
+        
+        axs[2].imshow(w_img)
+        axs[2].set_title("Kernel Weights")
+        axs[2].axis('off')
+
+        save_path = os.path.join(out_dir, f"kernel_{k}.png")
+        plt.savefig(save_path)
+        plt.close(fig)
 
     # Plot histogram of circular variances for all kernels at the given epoch
     fig, ax = plt.subplots(figsize=(8, 6))
@@ -418,7 +574,11 @@ def main():
             #   - loss computation
             #   - backward pass
             #   - and optimizer step
-            loss = 0.0 # Placeholder loss, replace with actual loss computation
+
+            pred = model(images)
+            loss = F.CrossEntropyLoss(pred, labels)
+            loss.backward()
+
 
             optimizer.step()
             
