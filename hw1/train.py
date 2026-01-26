@@ -1,5 +1,5 @@
 """
-Student Name:
+Student Name: Ricky Rojas
 
 CS375 / Psych 279 Homework 1
 
@@ -41,7 +41,7 @@ sns.set_theme(style="whitegrid")
 class AlexNet(nn.Module):
     def __init__(self, num_classes: int = 1000, dropout: float = 0.5) -> None:
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=11, stride=4, padding=2)
+        self.conv1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=11, stride=4)
         self.max_pool = nn.MaxPool2d(kernel_size=3, stride=2)
 
         self.conv2 = nn.Conv2d(in_channels=64, out_channels=192, kernel_size=5, padding=2)
@@ -52,7 +52,7 @@ class AlexNet(nn.Module):
 
         self.dropout = nn.Dropout(p=dropout)
 
-        self.fc1 = nn.Linear(256 * 6 * 6, 4096)
+        self.fc1 = nn.Linear(256 * 5 * 5, 4096)
         self.fc2 = nn.Linear(4096, 4096)
         self.fc3 = nn.Linear(4096, num_classes)
 
@@ -113,15 +113,15 @@ def evaluate_accuracy_and_loss(
             
             loss = loss_fn(outputs, labels)
             
-            total_loss += loss.item()
+            total_loss += loss.item() * images.size(0)
             
             _, predicted = torch.max(outputs, 1) 
             
             total_samples += labels.size(0)
             correct_predictions += (predicted == labels).sum().item()
 
-    avg_loss = total_loss / len(data_loader)
-    accuracy = correct_predictions / total_samples
+    avg_loss = total_loss / total_samples
+    accuracy = 100 * correct_predictions / total_samples
 
     return accuracy, avg_loss
 
@@ -313,75 +313,85 @@ def plot_sine_grating_responses_for_filters(
         #   - Visualize the kernel
         #   - Save the figure to out_dir
         # Repeat for each kernel
-    
+
+        # Extract deg, sf, and responses for this kernel
         data = responses_per_kernel[k]
-
-        # Convert data list to arrays for easier indexing
-        # data structure: [(deg, sf, resp), ...]
-        degs = np.array([d[0] for d in data])
-        sfs  = np.array([d[1] for d in data])
-        resps = np.array([d[2] for d in data])
-
-        # --- Use the helper function to compute CV ---
-        # Note: CV is computed across *all* responses collected. 
-        # Ideally, CV is computed over orientation for the *best* spatial frequency, 
-        # or averaged. Here we compute it over the full set of degs in the list 
-        # (which inherently averages over SFs if the dataset is balanced, or you 
-        # can filter for the best SF first).
-        # Typically, we compute CV at the preferred SF:
-        best_idx = np.argmax(resps)
-        best_sf = sfs[best_idx]
-        best_deg = degs[best_idx]
+        degs = [item[0] for item in data]
+        sfs = [item[1] for item in data]
+        resps = [item[2] for item in data]
         
-        # Filter data for the best spatial frequency to get a clean orientation tuning curve
-        mask_sf = np.isclose(sfs, best_sf)
-        tuning_degs = degs[mask_sf]
-        tuning_resps = resps[mask_sf]
-        
-        # Compute CV using the specific tuning curve data
-        cv = compute_circular_variance(tuning_resps, tuning_degs)
+        # 1. Compute circular variance
+        cv = compute_circular_variance(degs, resps)
         circular_variances.append(cv)
-
-        # --- Generate Plots ---
-        fig, axs = plt.subplots(1, 3, figsize=(18, 5))
-        fig.suptitle(f"Kernel {k} | Circular Variance: {cv:.4f}", fontsize=14)
-
-        # Subplot 1: Response vs Orientation (at best SF)
-        sorted_indices = np.argsort(tuning_degs)
-        axs[0].plot(tuning_degs[sorted_indices], tuning_resps[sorted_indices], marker='o')
-        axs[0].set_title(f"Tuning Curve (Fixed SF={best_sf:.2f})")
-        axs[0].set_xlabel("Orientation (deg)")
-        axs[0].set_ylabel("Response")
-        axs[0].grid(True, alpha=0.3)
-
-        # Subplot 2: Response vs Spatial Frequency (at best Deg)
-        mask_deg = np.isclose(degs, best_deg)
-        sf_tuning_sfs = sfs[mask_deg]
-        sf_tuning_resps = resps[mask_deg]
-        sorted_indices_sf = np.argsort(sf_tuning_sfs)
         
-        axs[1].plot(sf_tuning_sfs[sorted_indices_sf], sf_tuning_resps[sorted_indices_sf], marker='o', color='orange')
-        axs[1].set_title(f"Spatial Freq Tuning (Fixed Deg={best_deg:.1f})")
-        axs[1].set_xlabel("Spatial Frequency (sf)")
-        axs[1].set_ylabel("Response")
-        axs[1].grid(True, alpha=0.3)
-
-        # Subplot 3: Visualizing the kernel
-        w = conv1.weight.data[k].cpu() # Shape: [3, 11, 11]
-        w_min, w_max = w.min(), w.max()
-        if w_max > w_min:
-            w_norm = (w - w_min) / (w_max - w_min)
-        else:
-            w_norm = w
-        w_img = w_norm.permute(1, 2, 0).numpy()
+        # 2. Create figure with 3 subplots
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
         
-        axs[2].imshow(w_img)
-        axs[2].set_title("Kernel Weights")
-        axs[2].axis('off')
-
-        save_path = os.path.join(out_dir, f"kernel_{k}.png")
-        plt.savefig(save_path)
+        # Subplot 1: Response vs. Orientation (deg)
+        ax0 = axes[0]
+        # Group responses by orientation and compute mean
+        deg_response_dict = {}
+        for deg, sf, resp in data:
+            if deg not in deg_response_dict:
+                deg_response_dict[deg] = []
+            deg_response_dict[deg].append(resp)
+        
+        deg_vals = sorted(deg_response_dict.keys())
+        avg_resps_deg = [np.mean(deg_response_dict[d]) for d in deg_vals]
+        
+        ax0.plot(deg_vals, avg_resps_deg, 'o-', linewidth=2, markersize=6)
+        ax0.set_xlabel('Orientation (degrees)', fontsize=11)
+        ax0.set_ylabel('Response', fontsize=11)
+        ax0.set_title('Response vs. Orientation', fontsize=12)
+        ax0.grid(True, alpha=0.3)
+        
+        # Subplot 2: Response vs. Spatial Frequency (sf)
+        ax1 = axes[1]
+        # Group responses by spatial frequency and compute mean
+        sf_response_dict = {}
+        for deg, sf, resp in data:
+            if sf not in sf_response_dict:
+                sf_response_dict[sf] = []
+            sf_response_dict[sf].append(resp)
+        
+        sf_vals = sorted(sf_response_dict.keys())
+        avg_resps_sf = [np.mean(sf_response_dict[s]) for s in sf_vals]
+        
+        ax1.plot(sf_vals, avg_resps_sf, 'o-', linewidth=2, markersize=6, color='orange')
+        ax1.set_xlabel('Spatial Frequency', fontsize=11)
+        ax1.set_ylabel('Response', fontsize=11)
+        ax1.set_title('Response vs. Spatial Frequency', fontsize=12)
+        ax1.grid(True, alpha=0.3)
+        
+        # Subplot 3: Kernel visualization
+        ax2 = axes[2]
+        # Get the kernel weights for this specific kernel
+        kernel_weight = conv1.weight.data[k].cpu()  # shape: [3, 11, 11]
+        
+        # Create grid visualization (similar to plot_conv1_kernels)
+        kernel_grid = torchvision.utils.make_grid(
+            kernel_weight.unsqueeze(0),  # Add batch dimension: [1, 3, 11, 11]
+            normalize=True,
+            scale_each=True,
+            padding=1
+        )
+        kernel_img = kernel_grid.permute(1, 2, 0).numpy()
+        
+        ax2.imshow(kernel_img)
+        ax2.axis('off')
+        ax2.set_title('Kernel Weights', fontsize=12)
+        
+        # Overall title with circular variance
+        fig.suptitle(f'Kernel {k} - Circular Variance: {cv:.4f}', fontsize=14, fontweight='bold')
+        
+        # Save figure
+        fig.tight_layout(rect=[0, 0, 1, 0.96])  # Leave space for suptitle
+        save_path = os.path.join(out_dir, f'kernel_{k:03d}.png')
+        fig.savefig(save_path, bbox_inches='tight', dpi=100)
         plt.close(fig)
+
+    print(f"Saved {len(circular_variances)} kernel response plots to {out_dir}/")
+    
 
     # Plot histogram of circular variances for all kernels at the given epoch
     fig, ax = plt.subplots(figsize=(8, 6))
@@ -450,7 +460,7 @@ def main():
         cudnn.benchmark = True  # Enable cuDNN auto-tuner
     
     # Data directory (ImageNet structure assumed)
-    data_dir = None ### TODO: Set the path to the ImageNet dataset
+    data_dir = "./data/"
     
     # ---------------------------
     # 2. Data Preparation
@@ -563,6 +573,7 @@ def main():
 
         model.train()
         running_train_loss = 0.0
+        loss_fn = nn.CrossEntropyLoss()
 
         for images, labels in tqdm(train_loader, desc=f"Epoch {epoch}/{total_epochs} (Train)"):
             images, labels = images.to(device), labels.to(device)
@@ -576,7 +587,7 @@ def main():
             #   - and optimizer step
 
             pred = model(images)
-            loss = F.CrossEntropyLoss(pred, labels)
+            loss = loss_fn(pred, labels)
             loss.backward()
 
 
