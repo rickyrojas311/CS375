@@ -533,7 +533,7 @@ def main():
     start_epoch = 1
     if os.path.isfile(checkpoint_path):
         print(f"Found checkpoint {checkpoint_path}. Resuming training...")
-        checkpoint = torch.load(checkpoint_path, map_location=device)
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
         # Load state dicts
         model.load_state_dict(checkpoint['model_state_dict'])
