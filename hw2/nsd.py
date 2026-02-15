@@ -362,7 +362,7 @@ class AlexNetImageNet(nn.Module):
 #########################################
 
 # Set device.
-device = torch.device("cuda:5" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Model with random initialization.
 model_random = AlexNet().to(device)
