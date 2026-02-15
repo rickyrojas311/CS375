@@ -281,7 +281,7 @@ class AlexNet(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(in_channels=384, out_channels=384, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(in_channels=384, out_channels=256, kernel_size=3, padding=1)
+            nn.Conv2d(in_channels=384, out_channels=256, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=3, stride=2),
         )
