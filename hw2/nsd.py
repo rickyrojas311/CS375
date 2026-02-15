@@ -59,7 +59,12 @@ def r2_over_nc(y, y_pred, ncsnr):
     #       NC = (ncsnr ** 2) / ( (ncsnr ** 2) + (1.0 / num_trials) )
     # 4. Compute the standard R^2 score (using r2_score_sklearn) and then
     #    return the normalized R^2 score by dividing the R^2 score by NC.
-    pass
+    if ncsnr is None:
+        return r2_score_sklearn(y, y_pred, multioutput="raw_values")
+    else:
+        NC = (ncsnr ** 2) / ( (ncsnr ** 2) + (1.0 / 3.0) )
+        r2 = r2_score_sklearn(y, y_pred, multioutput="raw_values")
+        return r2 / NC
 
 
 def get_metadata_concat_hemi(Y):
@@ -263,7 +268,63 @@ preprocess = transforms.Compose([
 #
 # Note: Do not capture the final output of the network; only capture the intermediate features as specified.
 class AlexNet(nn.Module):
-    pass
+    def __init__(self, num_classes: int = 32, dropout: float = 0.5) -> None:
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=64, kernel_size=11, stride=4, padding=2),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2),
+            nn.Conv2d(in_channels=64, out_channels=192, kernel_size=5, padding=2),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2),
+            nn.Conv2d(in_channels=192, out_channels=384, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=384, out_channels=384, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=384, out_channels=256, kernel_size=3, padding=1)
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2),
+        )
+        self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
+        self.classifier = nn.Sequential(
+            nn.Dropout(p=dropout),
+            nn.Linear(256 * 6 * 6, 4096),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Linear(4096, 4096),
+            nn.ReLU(inplace=True),
+            nn.Linear(4096, num_classes),
+        )
+
+    def forward(self, x: torch.Tensor) -> dict:
+        features = {}
+        
+        # Layer 1 & 2
+        x = self.features[:3](x)
+        features["conv_pool_after_layer2"] = torch.flatten(x, 1)
+        
+        # Layer 3, 4, 5
+        x = self.features[3:6](x)
+        features["conv_pool_after_layer_5"] = torch.flatten(x, 1)
+        
+        # Layer 6, 7, 8, 9, 10
+        x = self.features[6:13](x)
+        features["conv_pool_after_layer_12"] = torch.flatten(x, 1)
+
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+
+        # Classifier with intermediate captures
+        x = self.classifier[0](x) # dropout
+        x = self.classifier[1](x) # fc1
+        features["fc1"] = x
+        
+        x = self.classifier[2](x) # relu
+        x = self.classifier[3](x) # dropout
+        x = self.classifier[4](x) # fc2
+        features["fc2"] = x
+        
+        return features
 
 
 class AlexNetImageNet(nn.Module):
@@ -314,7 +375,7 @@ model_loaded.eval()
 # Model loaded from a barcode checkpoint.
 model_barcode = AlexNet(num_classes=32).to(device)
 ### TODO: Replace the placeholder with the actual path to the barcode checkpoint.
-checkpoint = torch.load("path/to/barcode_checkpoint.pth", map_location=device)
+checkpoint = torch.load("barcode/model.pt", map_location=device)
 model_barcode.load_state_dict(checkpoint['model_state_dict'])
 model_barcode.eval()
 
@@ -407,7 +468,24 @@ for model_name, model_instance in models.items():
             # 6. Print the optimal alpha selected and the R2 score on the test set.
             # 7. Compute the normalized R2 scores using the provided r2_over_nc function.
             # 8. Compute the average normalized R2 score across all voxels and store it in the scores dictionary.
-            pass
+            y_train = train_fmri_data[area]["responses"]
+            y_test = test_fmri_data[area]["responses"]
+            ncsnr = test_fmri_data[area]["ncsnr"]
+            
+            if X_train.shape[0] != y_train.shape[0] or X_test.shape[0] != y_test.shape[0]:
+                print(f"Warning: Mismatch in samples for area {area}. Skipping...")
+                continue
+
+            alphas = [1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 0.1, 1, 10, 100, 1000, 10000, 1e5, 1e6, 1e7]
+            reg = RidgeCV(alphas=alphas).fit(X_train, y_train)
+            
+            y_pred = reg.predict(X_test)
+            r2_raw = r2_score_sklearn(y_test, y_pred, multioutput="uniform_average")
+            
+            print(f"Area {area}: Alpha={reg.alpha_:.2e}, R2={r2_raw:.4f}")
+            
+            norm_r2s = r2_over_nc(y_test, y_pred, ncsnr)
+            scores[layer][area] = np.mean(norm_r2s)
     
     # Convert scores to a DataFrame (rows: layers, columns: brain areas).
     df_scores = pd.DataFrame(scores).T

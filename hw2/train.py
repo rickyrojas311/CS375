@@ -463,7 +463,11 @@ def main():
         )
     ])
     
-    val_int = np.random.randint(0, 4294967296, size=50000, dtype=np.uint32)
+    # Ensure unique validation numbers
+    val_set = set()
+    while len(val_set) < 50000:
+        val_set.add(np.random.randint(0, 4294967296, dtype=np.uint32))
+    val_int = list(val_set)
 
     train_dataset = BarcodeDataset("train", 1000000, val_int, seed=seed)
 
