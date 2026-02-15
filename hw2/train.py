@@ -241,7 +241,7 @@ def plot_sine_grating_responses_for_filters(
     image_dir = "sine_grating_images"
     if not os.path.isdir(image_dir):
         print(f"Warning: Directory '{image_dir}' does not exist.")
-        return
+        return []
     image_files = [f for f in os.listdir(image_dir) if f.endswith(".jpg")]
 
     # Prepare a list for each kernel to store (deg, sf, response)
