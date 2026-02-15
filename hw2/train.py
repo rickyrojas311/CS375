@@ -434,6 +434,7 @@ def main():
     if device.type == "cuda":
         torch.cuda.manual_seed_all(seed)
         cudnn.benchmark = True  # Enable cuDNN auto-tuner
+    np.random.seed(seed)
     
     # Data directory (ImageNet structure assumed)
     data_dir = "./data/"
@@ -464,9 +465,9 @@ def main():
     
     val_int = np.random.randint(0, 4294967296, size=50000, dtype=np.uint32)
 
-    train_dataset = BarcodeDataset("train", 1000000, val_int)
+    train_dataset = BarcodeDataset("train", 1000000, val_int, seed=seed)
 
-    test_dataset = BarcodeDataset("val", 50000, val_int)
+    test_dataset = BarcodeDataset("val", 50000, val_int, seed=seed)
     
     train_loader = torch.utils.data.DataLoader(
         train_dataset, 
