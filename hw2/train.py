@@ -1,15 +1,12 @@
 """
 Student Name: Ricky Rojas
 
-CS375 / Psych 279 Homework 1
+CS375 / Psych 279 Homework 2
 
 You have to finish the following tasks:
-- Implement the AlexNet model definition
-- Implement the forward pass of the AlexNet model
-- Implement the missing parts of the training loop
-- Implement the evaluation function to compute top-1 accuracy and loss
-- Implement the function to plot the Conv1 kernels
-- Implement the function to plot the kernel responses for sine gratings
+- Load and train on Barcode dataset
+- Adjust AlexNet to output 32 values
+- Switch loss function to BCE
 
 """
 
@@ -31,6 +28,8 @@ from tqdm import tqdm
 from PIL import Image
 from typing import Tuple, List
 
+from barcode import BarcodeDataset
+
 sns.set_theme(style="whitegrid")
 
 
@@ -39,7 +38,7 @@ sns.set_theme(style="whitegrid")
 #######################################################################################
 
 class AlexNet(nn.Module):
-    def __init__(self, num_classes: int = 1000, dropout: float = 0.5) -> None:
+    def __init__(self, num_classes: int = 32, dropout: float = 0.5) -> None:
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=11, stride=4, padding=2)
         self.max_pool = nn.MaxPool2d(kernel_size=3, stride=2)
@@ -97,9 +96,8 @@ def evaluate_accuracy_and_loss(
         - accuracy: float, the top-1 accuracy of the model on the data_loader
         - loss: float, the average loss of the model on the data_loader
     """
-    ### TODO: Implement the evaluation function that computes the top-1 accuracy and loss
     model.eval()
-    loss_fn = nn.CrossEntropyLoss()
+    loss_fn = nn.BCEWithLogitsLoss()
     
     total_loss = 0
     correct_predictions = 0
@@ -115,10 +113,10 @@ def evaluate_accuracy_and_loss(
             
             total_loss += loss.item() * images.size(0)
             
-            _, predicted = torch.max(outputs, 1) 
+            predicted = (outputs > 0).float()
             
             total_samples += labels.size(0)
-            correct_predictions += (predicted == labels).sum().item()
+            correct_predictions += (predicted == labels).all(dim=1).sum().item()
 
     avg_loss = total_loss / total_samples
     accuracy = 100 * correct_predictions / total_samples
@@ -133,14 +131,8 @@ def plot_conv1_kernels(model: torch.nn.Module, epoch: int):
         - model: torch.nn.Module, the AlexNet model
         - epoch: int, the current training epoch
     """
-    ### TODO: Implement the function to plot the Conv1 kernels
-    # 1. Access the first convolution's weights
-    # AlexNet structure is usually model.features[0] for the first Conv2d
     weights = model.conv1.weight.data.cpu()
 
-    # 2. Create a grid of images
-    # normalize=True shifts the image to the range (0, 1)
-    # scale_each=True scales each kernel individually, improving contrast
     grid_tensor = torchvision.utils.make_grid(
         weights, 
         nrow=8, 
@@ -149,22 +141,18 @@ def plot_conv1_kernels(model: torch.nn.Module, epoch: int):
         scale_each=True
     )
 
-    # 3. Prepare for Matplotlib
-    # make_grid returns (C, H, W), but matplotlib expects (H, W, C)
     grid_image = grid_tensor.permute(1, 2, 0).numpy()
 
-    # 4. Plot and Save
     plt.figure(figsize=(10, 10))
     plt.imshow(grid_image)
     plt.axis('off')  # Hide axes for a cleaner look
     plt.title(f'Conv1 Kernels - Epoch {epoch}')
 
-    # Ensure the output directory exists
-    os.makedirs('out', exist_ok=True)
+    os.makedirs('barcode', exist_ok=True)
     
-    save_path = f'out/conv1_kernels_epoch_{epoch}.png'
+    save_path = f'barcode/conv1_kernels_epoch_{epoch}.png'
     plt.savefig(save_path, bbox_inches='tight')
-    plt.close()  # Close the figure to free memory
+    plt.close()
 
     print(f"Saved Conv1 kernels visualization to {save_path}")
 
@@ -182,37 +170,25 @@ def compute_circular_variance(angles_deg, responses):
 
     The returned CV is clamped in [0,1].
     """
-    # 1) Convert angles to a NumPy array
     angles_deg = np.array(angles_deg, dtype=float)
-
-    # 2) Double the angles since we are measuring direcion not orientation
-    #    selectivity. This effectively treats 0 and 180 as the same.
     angles_deg = 2.0 * angles_deg
 
-    # 3) Convert degrees to radians
     angles_rad = np.radians(angles_deg)
 
-    # 4) ReLU the responses (clip negative to zero)
     r = np.array(responses, dtype=float)
     r = np.maximum(r, 0.0)  # ReLU
 
     sum_r = r.sum()
     if sum_r == 0:
-        # If the total response is 0, define CV = 0 (or handle as you see fit)
         return 0.0
 
-    # 5) Compute vector sums
     sum_rcos = np.sum(r * np.cos(angles_rad))
     sum_rsin = np.sum(r * np.sin(angles_rad))
     resultant = math.sqrt(sum_rcos**2 + sum_rsin**2)
 
-    # 6) Normalize by the sum of responses
     R = resultant / sum_r
 
-    # 7) Compute circular variance: 1 - R
     cv = 1.0 - R
-
-    # 8) Clamp to [0,1] to guard against floating-point imprecision
     cv = max(0.0, min(cv, 1.0))
 
     return cv
@@ -245,7 +221,7 @@ def plot_sine_grating_responses_for_filters(
     """
 
     # Where to save the plots for this epoch
-    out_dir = f"out/kernel_responses_{epoch:02d}"
+    out_dir = f"barcode/kernel_responses_{epoch:02d}"
     os.makedirs(out_dir, exist_ok=True)
 
     # We'll use a simple transform to match the input size expected by AlexNet
@@ -434,7 +410,7 @@ def main():
     # ---------------------------
     # 1. Configure Parameters
     # ---------------------------
-    os.makedirs("out", exist_ok=True)
+    os.makedirs("barcode", exist_ok=True)
 
     # Hyperparameters
     total_epochs = 30
@@ -486,14 +462,11 @@ def main():
         )
     ])
     
-    train_dataset = torchvision.datasets.ImageFolder(
-        root=os.path.join(data_dir, 'train'), 
-        transform=train_transforms
-    )
-    test_dataset = torchvision.datasets.ImageFolder(
-        root=os.path.join(data_dir, 'val'), 
-        transform=val_transforms
-    )
+    val_int = np.random.randint(0, 4294967296, size=50000, dtype=np.uint32)
+
+    train_dataset = BarcodeDataset("train", 1000000, val_int)
+
+    test_dataset = BarcodeDataset("val", 50000, val_int)
     
     train_loader = torch.utils.data.DataLoader(
         train_dataset, 
@@ -511,7 +484,7 @@ def main():
     # ---------------------------
     # 3. Model Setup
     # ---------------------------
-    model = AlexNet(num_classes=1000).to(device)
+    model = AlexNet(num_classes=32).to(device)
 
     optimizer = optim.SGD(
         model.parameters(), 
@@ -527,7 +500,7 @@ def main():
     circular_variances = []
 
     # Check if there's an existing checkpoint we can load
-    checkpoint_path = "out/model.pt"
+    checkpoint_path = "barcode/model.pt"
     start_epoch = 1
     if os.path.isfile(checkpoint_path):
         print(f"Found checkpoint {checkpoint_path}. Resuming training...")
@@ -571,7 +544,7 @@ def main():
 
         model.train()
         running_train_loss = 0.0
-        loss_fn = nn.CrossEntropyLoss()
+        loss_fn = nn.BCEWithLogitsLoss()
 
         for images, labels in tqdm(train_loader, desc=f"Epoch {epoch}/{total_epochs} (Train)"):
             images, labels = images.to(device), labels.to(device)
@@ -645,7 +618,7 @@ def main():
             ax3.plot(range(0, epoch + 1), [cv[k] for cv in circular_variances], label=f"Kernel {k}")
 
         plt.tight_layout()
-        plt.savefig("out/training_metrics.png")
+        plt.savefig("barcode/training_metrics.png")
         plt.close(fig)
 
 
@@ -659,9 +632,9 @@ def main():
             'test_acc_history': test_acc_history,
             'circular_variances': circular_variances,
         }
-        torch.save(checkpoint_dict, "out/model.pt")  # Overwrite/update main checkpoint
+        torch.save(checkpoint_dict, "barcode/model.pt")  # Overwrite/update main checkpoint
 
-    print("Training complete. Kernels, training metrics, and sine-grating responses have been saved to the 'out/' folder.")
+    print("Training complete. Kernels, training metrics, and sine-grating responses have been saved to the 'barcode/' folder.")
 
 
 if __name__ == "__main__":
