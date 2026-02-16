@@ -375,7 +375,7 @@ model_loaded.eval()
 # Model loaded from a barcode checkpoint.
 model_barcode = AlexNet(num_classes=32).to(device)
 ### TODO: Replace the placeholder with the actual path to the barcode checkpoint.
-checkpoint = torch.load("barcode/model.pt", map_location=device)
+checkpoint = torch.load("/scratch/users/rickyro/CS375/hw2/barcode", map_location=device)
 model_barcode.load_state_dict(checkpoint['model_state_dict'])
 model_barcode.eval()
 
