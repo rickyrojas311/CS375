@@ -270,59 +270,48 @@ preprocess = transforms.Compose([
 class AlexNet(nn.Module):
     def __init__(self, num_classes: int = 32, dropout: float = 0.5) -> None:
         super().__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=64, kernel_size=11, stride=4, padding=2),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=3, stride=2),
-            nn.Conv2d(in_channels=64, out_channels=192, kernel_size=5, padding=2),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=3, stride=2),
-            nn.Conv2d(in_channels=192, out_channels=384, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(in_channels=384, out_channels=384, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(in_channels=384, out_channels=256, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=3, stride=2),
-        )
-        self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
-        self.classifier = nn.Sequential(
-            nn.Dropout(p=dropout),
-            nn.Linear(256 * 6 * 6, 4096),
-            nn.ReLU(inplace=True),
-            nn.Dropout(p=dropout),
-            nn.Linear(4096, 4096),
-            nn.ReLU(inplace=True),
-            nn.Linear(4096, num_classes),
-        )
+        self.conv1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=11, stride=4, padding=2)
+        self.max_pool = nn.MaxPool2d(kernel_size=3, stride=2)
+
+        self.conv2 = nn.Conv2d(in_channels=64, out_channels=192, kernel_size=5, padding=2)
+        
+        self.conv3 = nn.Conv2d(in_channels=192, out_channels=384, kernel_size=3, padding=1)
+        self.conv4 = nn.Conv2d(in_channels=384, out_channels=384, kernel_size=3, padding=1)
+        self.conv5 = nn.Conv2d(in_channels=384, out_channels=256, kernel_size=3, padding=1)
+
+        self.dropout = nn.Dropout(p=dropout)
+
+        self.fc1 = nn.Linear(256 * 6 * 6, 4096)
+        self.fc2 = nn.Linear(4096, 4096)
+        self.fc3 = nn.Linear(4096, num_classes)
 
     def forward(self, x: torch.Tensor) -> dict:
         features = {}
         
-        # Layer 1 & 2
-        x = self.features[:3](x)
+        # Features
+        x = self.max_pool(torch.relu(self.conv1(x)))
         features["conv_pool_after_layer2"] = torch.flatten(x, 1)
         
-        # Layer 3, 4, 5
-        x = self.features[3:6](x)
+        x = self.max_pool(torch.relu(self.conv2(x)))
         features["conv_pool_after_layer_5"] = torch.flatten(x, 1)
         
-        # Layer 6, 7, 8, 9, 10
-        x = self.features[6:13](x)
+        x = torch.relu(self.conv3(x))
+        x = torch.relu(self.conv4(x))
+        x = self.max_pool(torch.relu(self.conv5(x)))
         features["conv_pool_after_layer_12"] = torch.flatten(x, 1)
 
-        x = self.avgpool(x)
         x = torch.flatten(x, 1)
 
-        # Classifier with intermediate captures
-        x = self.classifier[0](x) # dropout
-        x = self.classifier[1](x) # fc1
+        # Classifier
+        x = torch.relu(self.fc1(x))
         features["fc1"] = x
+        x = self.dropout(x)
         
-        x = self.classifier[2](x) # relu
-        x = self.classifier[3](x) # dropout
-        x = self.classifier[4](x) # fc2
+        x = torch.relu(self.fc2(x))
         features["fc2"] = x
+        x = self.dropout(x)
+        
+        x = self.fc3(x)
         
         return features
 
